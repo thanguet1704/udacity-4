@@ -1,0 +1,124 @@
+import { DocumentClient } from 'aws-sdk/clients/dynamodb'
+const xray = require('aws-xray-sdk')
+import * as originalAws from 'aws-sdk'
+
+import { TodoItem } from '../models/TodoItem'
+
+const AWS = xray.captureAWS(originalAws)
+
+export class TodoDataLayer {
+  constructor(
+    private readonly docClient: DocumentClient = new AWS.DynamoDB.DocumentClient(),
+    private readonly s3 = new AWS.S3({ signatureVersion: 'v4' }),
+    private readonly todosTable = process.env.TODO_TABLE,
+    private readonly imageBucketName = process.env.IMAGE_BUCKET_NAME,
+    private readonly signedUrlExpiration = process.env.SIGNED_URL_EXPIRATION,
+    private readonly todoIdIndex = process.env.INDEX_NAME
+  ) {}
+
+  async getAllTodos(todoItemDTO): Promise<TodoItem[]> {
+    try {
+      const param = {
+        TableName: this.todosTable,
+        IndexName: this.todoIdIndex,
+        KeyConditionExpression: 'userId = :userId',
+        ExpressionAttributeValues: {
+          ':userId': todoItemDTO.userId
+        }
+      }
+
+      const result = await this.docClient.query(param).promise()
+      const items = result.Items
+
+      return items as TodoItem[]
+    } catch (err) {
+      throw new Error(err)
+    }
+  }
+
+  async createTodo(todoItemDTO): Promise<TodoItem> {
+    try {
+      const param = {
+        TableName: this.todosTable,
+        Item: todoItemDTO
+      }
+
+      await this.docClient.put(param).promise()
+
+      return todoItemDTO as TodoItem
+    } catch (err) {
+      throw new Error(err)
+    }
+  }
+
+  async deleteTodo(todoItemDTO): Promise<String> {
+    try {
+      const param = {
+        TableName: this.todosTable,
+        Key: {
+          userId: todoItemDTO.userId,
+          todoId: todoItemDTO.todoId
+        }
+      }
+
+      await this.docClient.delete(param).promise()
+
+      return 'todo deleted'
+    } catch (err) {
+      throw new Error(err)
+    }
+  }
+
+  async updateTodo(todoItemDTO): Promise<String> {
+    try {
+      const param = {
+        TableName: this.todosTable,
+        Key: {
+          userId: todoItemDTO.userId,
+          todoId: todoItemDTO.todoId
+        },
+        UpdateExpression: 'set #tn = :n, dueDate=:dd, done=:d',
+        ExpressionAttributeNames: { '#tn': 'name' },
+        ExpressionAttributeValues: {
+          ':n': todoItemDTO.name,
+          ':dd': todoItemDTO.dueDate,
+          ':d': todoItemDTO.done
+        }
+      }
+
+      await this.docClient.update(param).promise()
+
+      return 'todo updated'
+    } catch (err) {
+      throw new Error(err)
+    }
+  }
+
+  async generateUploadUrl(todoItemDTO): Promise<String> {
+    try {
+      const signedUrl = await this.s3.getSignedUrl('putObject', {
+        Bucket: this.imageBucketName,
+        Key: todoItemDTO.todoId,
+        Expires: this.signedUrlExpiration
+      })
+
+      const param = {
+        TableName: this.todosTable,
+        Key: {
+          userId: todoItemDTO.userId,
+          todoId: todoItemDTO.todoId
+        },
+        UpdateExpression: 'set attachmentUrl = :a',
+        ExpressionAttributeValues: {
+          ':a': `https://${this.imageBucketName}.s3.amazonaws.com/${todoItemDTO.todoId}`
+        }
+      }
+
+      await this.docClient.update(param).promise()
+
+      return signedUrl
+    } catch (err) {
+      throw new Error(err)
+    }
+  }
+}

@@ -368,6 +368,9 @@ resources:
     AttachmentsBucket:
       Type: AWS::S3::Bucket
       Properties:
+        PublicAccessBlockConfiguration:
+          BlockPublicPolicy: false
+          RestrictPublicBuckets: false
         BucketName: ${self:provider.environment.IMAGE_BUCKET_NAME}
         CorsConfiguration:
           CorsRules:
